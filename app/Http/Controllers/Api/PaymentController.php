@@ -15,9 +15,11 @@ class PaymentController extends Controller
 {
     /**
      * Iniciar pagamento M-Pesa
+     * POST /api/v1/orders/{order}/payment/mpesa
      */
-    public function initiateMpesaPayment(Request $request, Order $order)
+    public function initiateMpesaPayment(Order $order, Request $request)
     {
+        // Verificar se o pedido pertence ao usuário
         if ($order->user_id !== $request->user()->id) {
             return response()->json([
                 'status' => 'error',
@@ -25,15 +27,8 @@ class PaymentController extends Controller
             ], 403);
         }
 
-        if ($order->payment_status !== 'pending') {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Pagamento já processado'
-            ], 400);
-        }
-
         $validator = Validator::make($request->all(), [
-            'phone_number' => 'required|string|regex:/^(\+258|258|0)?[0-9]{8,9}$/',
+            'phone_number' => 'required|string|min:9|max:15'
         ]);
 
         if ($validator->fails()) {
@@ -45,97 +40,27 @@ class PaymentController extends Controller
         }
 
         try {
-            DB::beginTransaction();
-
-            // Buscar método de pagamento M-Pesa
-            $paymentMethod = PaymentMethod::where('slug', 'mpesa')->where('is_active', true)->first();
-
-            if (!$paymentMethod) {
-                throw new \Exception('Método de pagamento M-Pesa não disponível');
+            // Para desenvolvimento: simular sucesso
+            if (config('app.env') === 'local') {
+                return $this->simulatePaymentSuccess($order, 'mpesa', $request->phone_number);
             }
 
-            $phoneNumber = $this->normalizePhoneNumber($request->phone_number);
-            $transactionId = 'MPESA_' . time() . '_' . $order->id;
+            // TODO: Implementar integração real com M-Pesa
+            // Aqui você integraria com a API do M-Pesa
 
-            // Calcular taxa de pagamento
-            $feeAmount = $paymentMethod->calculateFee($order->total_amount);
-            $netAmount = $order->total_amount - $feeAmount;
-
-            // Criar registro de pagamento
-            $payment = Payment::create([
-                'order_id' => $order->id,
-                'payment_method_id' => $paymentMethod->id,
-                'user_id' => $request->user()->id,
-                'transaction_id' => $transactionId,
-                'amount' => $order->total_amount,
-                'fee_amount' => $feeAmount,
-                'net_amount' => $netAmount,
-                'status' => 'pending',
-                'description' => "Pagamento M-Pesa para pedido #{$order->order_number}",
-                'metadata' => [
-                    'phone_number' => $phoneNumber,
-                    'provider' => 'mpesa',
-                    'initiated_at' => now()->toISOString()
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Pagamento M-Pesa iniciado. Aguarde confirmação no seu telefone.',
+                'data' => [
+                    'order_id' => $order->id,
+                    'payment_method' => 'mpesa',
+                    'phone_number' => $request->phone_number,
+                    'amount' => $order->total_amount,
+                    'instructions' => 'Confirme o pagamento no seu telefone M-Pesa'
                 ]
             ]);
 
-            // Atualizar pedido
-            $order->update([
-                'payment_method' => 'mpesa',
-                'payment_reference' => $transactionId
-            ]);
-
-            // Simular integração com M-Pesa API
-            $mpesaResponse = $this->simulateMpesaRequest($order, $phoneNumber);
-
-            if ($mpesaResponse['success']) {
-                $payment->update([
-                    'external_id' => $mpesaResponse['transaction_id'],
-                    'status' => 'processing',
-                    'metadata' => array_merge($payment->metadata, [
-                        'external_transaction_id' => $mpesaResponse['transaction_id'],
-                        'provider_message' => $mpesaResponse['message']
-                    ])
-                ]);
-
-                DB::commit();
-
-                Log::info('M-Pesa payment initiated', [
-                    'order_id' => $order->id,
-                    'payment_id' => $payment->id,
-                    'transaction_id' => $transactionId,
-                    'phone_number' => $phoneNumber
-                ]);
-
-                return response()->json([
-                    'status' => 'success',
-                    'message' => 'Pagamento M-Pesa iniciado. Verifique seu telefone para confirmar.',
-                    'data' => [
-                        'payment' => [
-                            'transaction_id' => $payment->transaction_id,
-                            'amount' => $payment->amount,
-                            'fee_amount' => $payment->fee_amount,
-                            'phone_number' => $phoneNumber,
-                            'estimated_confirmation_time' => '2-3 minutos'
-                        ]
-                    ]
-                ]);
-            } else {
-                $payment->update([
-                    'status' => 'failed',
-                    'failure_reason' => $mpesaResponse['error']
-                ]);
-
-                DB::rollBack();
-
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'Falha ao iniciar pagamento M-Pesa: ' . $mpesaResponse['error']
-                ], 400);
-            }
-
         } catch (\Exception $e) {
-            DB::rollBack();
             Log::error('M-Pesa payment error', [
                 'order_id' => $order->id,
                 'error' => $e->getMessage()
@@ -143,16 +68,18 @@ class PaymentController extends Controller
 
             return response()->json([
                 'status' => 'error',
-                'message' => 'Erro interno do servidor'
+                'message' => 'Erro ao processar pagamento M-Pesa'
             ], 500);
         }
     }
 
     /**
-     * Iniciar pagamento eMola
+     * Iniciar pagamento e-Mola
+     * POST /api/v1/orders/{order}/payment/emola
      */
-    public function initiateMolaPayment(Request $request, Order $order)
+    public function initiateMolaPayment(Order $order, Request $request)
     {
+        // Verificar se o pedido pertence ao usuário
         if ($order->user_id !== $request->user()->id) {
             return response()->json([
                 'status' => 'error',
@@ -160,15 +87,8 @@ class PaymentController extends Controller
             ], 403);
         }
 
-        if ($order->payment_status !== 'pending') {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Pagamento já processado'
-            ], 400);
-        }
-
         $validator = Validator::make($request->all(), [
-            'phone_number' => 'required|string|regex:/^(\+258|258|0)?[0-9]{8,9}$/',
+            'phone_number' => 'required|string|min:9|max:15'
         ]);
 
         if ($validator->fails()) {
@@ -180,113 +100,46 @@ class PaymentController extends Controller
         }
 
         try {
-            DB::beginTransaction();
-
-            // Buscar método de pagamento eMola
-            $paymentMethod = PaymentMethod::where('slug', 'emola')->where('is_active', true)->first();
-
-            if (!$paymentMethod) {
-                throw new \Exception('Método de pagamento eMola não disponível');
+            // Para desenvolvimento: simular sucesso
+            if (config('app.env') === 'local') {
+                return $this->simulatePaymentSuccess($order, 'emola', $request->phone_number);
             }
 
-            $phoneNumber = $this->normalizePhoneNumber($request->phone_number);
-            $transactionId = 'EMOLA_' . time() . '_' . $order->id;
+            // TODO: Implementar integração real com e-Mola
+            // Aqui você integraria com a API do e-Mola
 
-            // Calcular taxa
-            $feeAmount = $paymentMethod->calculateFee($order->total_amount);
-            $netAmount = $order->total_amount - $feeAmount;
-
-            // Criar pagamento
-            $payment = Payment::create([
-                'order_id' => $order->id,
-                'payment_method_id' => $paymentMethod->id,
-                'user_id' => $request->user()->id,
-                'transaction_id' => $transactionId,
-                'amount' => $order->total_amount,
-                'fee_amount' => $feeAmount,
-                'net_amount' => $netAmount,
-                'status' => 'pending',
-                'description' => "Pagamento eMola para pedido #{$order->order_number}",
-                'metadata' => [
-                    'phone_number' => $phoneNumber,
-                    'provider' => 'emola',
-                    'initiated_at' => now()->toISOString()
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Pagamento e-Mola iniciado. Aguarde confirmação no seu telefone.',
+                'data' => [
+                    'order_id' => $order->id,
+                    'payment_method' => 'emola',
+                    'phone_number' => $request->phone_number,
+                    'amount' => $order->total_amount,
+                    'instructions' => 'Confirme o pagamento no seu telefone e-Mola'
                 ]
             ]);
 
-            $order->update([
-                'payment_method' => 'emola',
-                'payment_reference' => $transactionId
-            ]);
-
-            // Simular integração eMola
-            $emolaResponse = $this->simulateEmolaRequest($order, $phoneNumber);
-
-            if ($emolaResponse['success']) {
-                $payment->update([
-                    'external_id' => $emolaResponse['transaction_id'],
-                    'status' => 'processing',
-                    'metadata' => array_merge($payment->metadata, [
-                        'external_transaction_id' => $emolaResponse['transaction_id'],
-                        'provider_message' => $emolaResponse['message']
-                    ])
-                ]);
-
-                DB::commit();
-
-                Log::info('eMola payment initiated', [
-                    'order_id' => $order->id,
-                    'payment_id' => $payment->id,
-                    'transaction_id' => $transactionId,
-                    'phone_number' => $phoneNumber
-                ]);
-
-                return response()->json([
-                    'status' => 'success',
-                    'message' => 'Pagamento eMola iniciado. Verifique seu telefone para confirmar.',
-                    'data' => [
-                        'payment' => [
-                            'transaction_id' => $payment->transaction_id,
-                            'amount' => $payment->amount,
-                            'fee_amount' => $payment->fee_amount,
-                            'phone_number' => $phoneNumber,
-                            'estimated_confirmation_time' => '1-2 minutos'
-                        ]
-                    ]
-                ]);
-            } else {
-                $payment->update([
-                    'status' => 'failed',
-                    'failure_reason' => $emolaResponse['error']
-                ]);
-
-                DB::rollBack();
-
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'Falha ao iniciar pagamento eMola: ' . $emolaResponse['error']
-                ], 400);
-            }
-
         } catch (\Exception $e) {
-            DB::rollBack();
-            Log::error('eMola payment error', [
+            Log::error('e-Mola payment error', [
                 'order_id' => $order->id,
                 'error' => $e->getMessage()
             ]);
 
             return response()->json([
                 'status' => 'error',
-                'message' => 'Erro interno do servidor'
+                'message' => 'Erro ao processar pagamento e-Mola'
             ], 500);
         }
     }
 
     /**
      * Confirmar pagamento em dinheiro
+     * POST /api/v1/orders/{order}/payment/cash
      */
-    public function confirmCashPayment(Request $request, Order $order)
+    public function confirmCashPayment(Order $order, Request $request)
     {
+        // Verificar se o pedido pertence ao usuário
         if ($order->user_id !== $request->user()->id) {
             return response()->json([
                 'status' => 'error',
@@ -294,94 +147,70 @@ class PaymentController extends Controller
             ], 403);
         }
 
-        if ($order->payment_status !== 'pending') {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Pagamento já processado'
-            ], 400);
-        }
-
         try {
             DB::beginTransaction();
 
-            // Buscar método de pagamento dinheiro
-            $paymentMethod = PaymentMethod::where('slug', 'cash')->where('is_active', true)->first();
-
-            if (!$paymentMethod) {
-                throw new \Exception('Pagamento em dinheiro não disponível');
-            }
-
-            $transactionId = 'CASH_' . time() . '_' . $order->id;
-
-            // Criar pagamento (sem taxa para dinheiro)
-            $payment = Payment::create([
-                'order_id' => $order->id,
-                'payment_method_id' => $paymentMethod->id,
-                'user_id' => $request->user()->id,
-                'transaction_id' => $transactionId,
-                'amount' => $order->total_amount,
-                'fee_amount' => 0,
-                'net_amount' => $order->total_amount,
-                'status' => 'pending', // Será confirmado na entrega
-                'description' => "Pagamento em dinheiro para pedido #{$order->order_number}",
-                'metadata' => [
-                    'payment_type' => 'cash_on_delivery',
-                    'confirmed_at_delivery' => false
-                ]
-            ]);
-
-            // Atualizar pedido - status especial para dinheiro
+            // Atualizar pedido
             $order->update([
                 'payment_method' => 'cash',
-                'payment_reference' => $transactionId,
-                'payment_status' => 'pending', // Continua pendente até entrega
-                'status' => 'confirmed' // Mas pedido é confirmado
+                'payment_status' => 'pending',
+                'status' => 'confirmed'
+            ]);
+
+            // Criar registro de pagamento
+            Payment::create([
+                'order_id' => $order->id,
+                'payment_method' => 'cash',
+                'amount' => $order->total_amount,
+                'status' => 'pending',
+                'transaction_id' => 'CASH_' . $order->order_number,
+                'payment_date' => now()
             ]);
 
             DB::commit();
 
-            Log::info('Cash payment confirmed', [
-                'order_id' => $order->id,
-                'payment_id' => $payment->id,
-                'transaction_id' => $transactionId
-            ]);
-
             return response()->json([
                 'status' => 'success',
-                'message' => 'Pedido confirmado! Pagamento será feito na entrega.',
+                'message' => 'Pedido confirmado! O pagamento será feito na entrega.',
                 'data' => [
-                    'order' => $order->fresh(['restaurant', 'items.menuItem']),
-                    'payment' => [
-                        'transaction_id' => $payment->transaction_id,
-                        'amount' => $payment->amount,
-                        'payment_method' => 'Dinheiro na entrega'
-                    ]
+                    'order_id' => $order->id,
+                    'payment_method' => 'cash',
+                    'amount' => $order->total_amount,
+                    'message' => 'Tenha o valor exato em mãos para facilitar a entrega'
                 ]
             ]);
 
         } catch (\Exception $e) {
             DB::rollBack();
-            Log::error('Cash payment error', [
+            Log::error('Cash payment confirmation error', [
                 'order_id' => $order->id,
                 'error' => $e->getMessage()
             ]);
 
             return response()->json([
                 'status' => 'error',
-                'message' => 'Erro interno do servidor'
+                'message' => 'Erro ao confirmar pagamento em dinheiro'
             ], 500);
         }
     }
 
     /**
-     * Confirmar pagamento (webhook ou manual)
+     * Confirmar pagamento (genérico)
+     * POST /api/v1/orders/{order}/payment/confirm
      */
-    public function confirmPayment(Request $request, Order $order)
+    public function confirmPayment(Order $order, Request $request)
     {
+        // Verificar se o pedido pertence ao usuário
+        if ($order->user_id !== $request->user()->id) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Acesso negado'
+            ], 403);
+        }
+
         $validator = Validator::make($request->all(), [
-            'transaction_id' => 'required|string',
-            'external_transaction_id' => 'required|string',
-            'amount' => 'numeric|min:0',
+            'transaction_id' => 'sometimes|string',
+            'confirmation_code' => 'sometimes|string',
         ]);
 
         if ($validator->fails()) {
@@ -395,16 +224,8 @@ class PaymentController extends Controller
         try {
             DB::beginTransaction();
 
-            $payment = Payment::where('order_id', $order->id)
-                              ->where('transaction_id', $request->transaction_id)
-                              ->first();
-
-                              if ($request->payment_method === 'cash') {
-                                $order->update([
-                                    'status' => 'confirmed', // Pedido confirmado mesmo com pagamento pendente
-                                    'payment_status' => 'pending' // Será pago na entrega
-                                ]);
-                            }
+            // Buscar pagamento existente
+            $payment = Payment::where('order_id', $order->id)->first();
 
             if (!$payment) {
                 return response()->json([
@@ -413,24 +234,12 @@ class PaymentController extends Controller
                 ], 404);
             }
 
-            // Verificar se o valor confere (se fornecido)
-            if ($request->has('amount') && $request->amount != $payment->amount) {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'Valor do pagamento não confere'
-                ], 400);
-            }
-
-
-            // Confirmar pagamento
+            // Atualizar pagamento
             $payment->update([
                 'status' => 'completed',
-                'external_id' => $request->external_transaction_id,
-                'payment_date' => now(),
-                'metadata' => array_merge($payment->metadata ?? [], [
-                    'confirmed_at' => now()->toISOString(),
-                    'confirmation_method' => 'webhook'
-                ])
+                'transaction_id' => $request->transaction_id ?? $payment->transaction_id,
+                'confirmation_data' => $request->all(),
+                'confirmed_at' => now()
             ]);
 
             // Atualizar pedido
@@ -441,18 +250,12 @@ class PaymentController extends Controller
 
             DB::commit();
 
-            Log::info('Payment confirmed', [
-                'order_id' => $order->id,
-                'payment_id' => $payment->id,
-                'transaction_id' => $request->transaction_id,
-                'external_transaction_id' => $request->external_transaction_id
-            ]);
-
             return response()->json([
                 'status' => 'success',
                 'message' => 'Pagamento confirmado com sucesso!',
                 'data' => [
-                    'order' => $order->fresh(['restaurant', 'items.menuItem'])
+                    'order' => $order->fresh(['restaurant', 'items.menuItem']),
+                    'payment' => $payment->fresh()
                 ]
             ]);
 
@@ -465,16 +268,18 @@ class PaymentController extends Controller
 
             return response()->json([
                 'status' => 'error',
-                'message' => 'Erro interno do servidor'
+                'message' => 'Erro ao confirmar pagamento'
             ], 500);
         }
     }
 
     /**
      * Verificar status do pagamento
+     * GET /api/v1/orders/{order}/payment/status
      */
     public function checkPaymentStatus(Order $order, Request $request)
     {
+        // Verificar se o pedido pertence ao usuário
         if ($order->user_id !== $request->user()->id) {
             return response()->json([
                 'status' => 'error',
@@ -482,192 +287,238 @@ class PaymentController extends Controller
             ], 403);
         }
 
-        $payment = Payment::with('paymentMethod')
-                          ->where('order_id', $order->id)
-                          ->latest()
-                          ->first();
+        $payment = Payment::where('order_id', $order->id)->latest()->first();
 
         return response()->json([
             'status' => 'success',
             'data' => [
+                'order_id' => $order->id,
                 'order_status' => $order->status,
                 'payment_status' => $order->payment_status,
                 'payment_method' => $order->payment_method,
-                'payment_reference' => $order->payment_reference,
                 'total_amount' => $order->total_amount,
                 'payment_details' => $payment ? [
+                    'id' => $payment->id,
                     'transaction_id' => $payment->transaction_id,
                     'status' => $payment->status,
-                    'status_label' => $payment->getStatusLabel(),
                     'amount' => $payment->amount,
-                    'fee_amount' => $payment->fee_amount,
-                    'net_amount' => $payment->net_amount,
                     'payment_date' => $payment->payment_date,
-                    'payment_method' => $payment->paymentMethod->name ?? null,
+                    'confirmed_at' => $payment->confirmed_at,
                 ] : null
             ]
         ]);
     }
 
     /**
-     * Obter métodos de pagamento disponíveis
+     * Listar métodos de pagamento disponíveis
+     * GET /api/v1/payment/methods
      */
     public function getPaymentMethods()
     {
-        $paymentMethods = PaymentMethod::active()
-                                      ->orderBy('sort_order')
-                                      ->get()
-                                      ->map(function ($method) {
-                                          return [
-                                              'id' => $method->id,
-                                              'name' => $method->name,
-                                              'slug' => $method->slug,
-                                              'description' => $method->description,
-                                              'icon' => $method->icon,
-                                              'type' => $method->type,
-                                              'type_label' => $method->getTypeLabel(),
-                                              'fee_percentage' => $method->fee_percentage,
-                                              'fee_fixed' => $method->fee_fixed,
-                                          ];
-                                      });
+        $methods = [
+            [
+                'id' => 'cash',
+                'name' => 'Dinheiro',
+                'description' => 'Pagamento na entrega',
+                'icon' => 'cash-outline',
+                'enabled' => true,
+                'requires_phone' => false
+            ],
+            [
+                'id' => 'mpesa',
+                'name' => 'M-Pesa',
+                'description' => 'Pagamento móvel M-Pesa',
+                'icon' => 'phone-portrait-outline',
+                'enabled' => true,
+                'requires_phone' => true
+            ],
+            [
+                'id' => 'emola',
+                'name' => 'e-Mola',
+                'description' => 'Carteira digital e-Mola',
+                'icon' => 'card-outline',
+                'enabled' => true,
+                'requires_phone' => true
+            ]
+        ];
 
         return response()->json([
             'status' => 'success',
-            'data' => $paymentMethods
+            'data' => $methods
         ]);
     }
 
     /**
-     * Webhook para confirmações automáticas
+     * Histórico de pagamentos do usuário
+     * GET /api/v1/payment/history
+     */
+    public function getPaymentHistory(Request $request)
+    {
+        $payments = Payment::with(['order.restaurant'])
+            ->whereHas('order', function($query) use ($request) {
+                $query->where('user_id', $request->user()->id);
+            })
+            ->latest()
+            ->paginate($request->per_page ?? 15);
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $payments
+        ]);
+    }
+
+    /**
+     * Webhook para receber notificações de pagamento
+     * POST /webhooks/payment
      */
     public function paymentWebhook(Request $request)
     {
-        // Verificar assinatura do webhook conforme provedor
-
-        $transactionId = $request->transaction_id;
-        $externalId = $request->external_transaction_id;
-        $status = $request->status; // 'success', 'failed', etc.
-        $amount = $request->amount;
-
-        $payment = Payment::where('transaction_id', $transactionId)->first();
-
-        if (!$payment) {
-            Log::warning('Webhook: Payment not found', ['transaction_id' => $transactionId]);
-            return response()->json(['status' => 'error', 'message' => 'Payment not found'], 404);
-        }
+        // Validar webhook (implementar validação de assinatura se necessário)
 
         try {
+            $data = $request->all();
+
+            Log::info('Payment webhook received', $data);
+
+            // Buscar pedido
+            $orderId = $data['order_id'] ?? $data['reference'] ?? null;
+
+            if (!$orderId) {
+                Log::warning('Payment webhook: missing order_id');
+                return response()->json(['status' => 'error', 'message' => 'Missing order_id'], 400);
+            }
+
+            $order = Order::find($orderId);
+
+            if (!$order) {
+                Log::warning('Payment webhook: order not found', ['order_id' => $orderId]);
+                return response()->json(['status' => 'error', 'message' => 'Order not found'], 404);
+            }
+
             DB::beginTransaction();
 
+            // Buscar ou criar pagamento
+            $payment = Payment::where('order_id', $order->id)->first();
 
-            if ($status === 'success') {
-                $payment->update([
-                    'status' => 'completed',
-                    'external_id' => $externalId,
-                    'payment_date' => now(),
-                    'metadata' => array_merge($payment->metadata ?? [], [
-                        'webhook_received_at' => now()->toISOString(),
-                        'provider_status' => $status,
-                        'provider_amount' => $amount
-                    ])
+            if (!$payment) {
+                $payment = Payment::create([
+                    'order_id' => $order->id,
+                    'payment_method' => $order->payment_method,
+                    'amount' => $order->total_amount,
+                    'status' => 'pending'
                 ]);
+            }
 
-                $payment->order->update([
+            // Atualizar com dados do webhook
+            $status = $data['status'] ?? 'pending';
+            $transactionId = $data['transaction_id'] ?? $data['external_id'] ?? null;
+
+            $payment->update([
+                'status' => $this->mapWebhookStatus($status),
+                'transaction_id' => $transactionId,
+                'external_data' => $data,
+                'confirmed_at' => $status === 'success' ? now() : null
+            ]);
+
+            // Atualizar pedido se pagamento foi confirmado
+            if ($status === 'success' || $status === 'completed') {
+                $order->update([
                     'payment_status' => 'paid',
-                    'status' => 'confirmed'
-                ]);
-            } else {
-                $payment->update([
-                    'status' => 'failed',
-                    'external_id' => $externalId,
-                    'failure_reason' => $request->failure_reason ?? 'Payment failed',
-                    'metadata' => array_merge($payment->metadata ?? [], [
-                        'webhook_received_at' => now()->toISOString(),
-                        'provider_status' => $status,
-                        'failure_details' => $request->all()
-                    ])
+                    'status' => $order->status === 'pending' ? 'confirmed' : $order->status
                 ]);
             }
 
             DB::commit();
 
-            Log::info('Webhook processed successfully', [
-                'transaction_id' => $transactionId,
-                'external_id' => $externalId,
-                'status' => $status,
-                'payment_id' => $payment->id
+            Log::info('Payment webhook processed successfully', [
+                'order_id' => $order->id,
+                'payment_id' => $payment->id,
+                'status' => $status
             ]);
 
-            return response()->json(['status' => 'success']);
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Webhook processed successfully'
+            ]);
 
         } catch (\Exception $e) {
             DB::rollBack();
-            Log::error('Webhook processing error', [
-                'transaction_id' => $transactionId,
-                'error' => $e->getMessage()
+
+            Log::error('Payment webhook error', [
+                'error' => $e->getMessage(),
+                'data' => $request->all()
             ]);
 
-            return response()->json(['status' => 'error'], 500);
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Webhook processing failed'
+            ], 500);
         }
     }
 
     /**
-     * Métodos privados
+     * Simular sucesso de pagamento (para desenvolvimento)
      */
-    private function simulateMpesaRequest($order, $phoneNumber)
+    private function simulatePaymentSuccess(Order $order, string $method, string $phone = null)
     {
-        sleep(1); // Simular delay de rede
+        try {
+            DB::beginTransaction();
 
-        $success = rand(1, 10) <= 8; // 80% de sucesso
+            // Criar registro de pagamento
+            Payment::create([
+                'order_id' => $order->id,
+                'payment_method' => $method,
+                'amount' => $order->total_amount,
+                'status' => 'completed',
+                'transaction_id' => strtoupper($method) . '_' . time() . '_' . rand(1000, 9999),
+                'payment_date' => now(),
+                'confirmed_at' => now()
+            ]);
 
-        if ($success) {
-            return [
-                'success' => true,
-                'transaction_id' => 'MPESA_EXT_' . time() . rand(1000, 9999),
-                'message' => 'Transação M-Pesa iniciada com sucesso'
-            ];
-        } else {
-            return [
-                'success' => false,
-                'error' => 'Número de telefone inválido ou saldo insuficiente'
-            ];
+            // Atualizar pedido
+            $order->update([
+                'payment_method' => $method,
+                'payment_status' => 'paid',
+                'status' => 'confirmed'
+            ]);
+
+            DB::commit();
+
+            return response()->json([
+                'status' => 'success',
+                'message' => "Pagamento {$method} simulado com sucesso! (Ambiente de desenvolvimento)",
+                'data' => [
+                    'order_id' => $order->id,
+                    'payment_method' => $method,
+                    'phone_number' => $phone,
+                    'amount' => $order->total_amount,
+                    'transaction_id' => strtoupper($method) . '_SIMULATED',
+                    'note' => 'Este é um pagamento simulado para desenvolvimento'
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw $e;
         }
     }
 
-    private function simulateEmolaRequest($order, $phoneNumber)
+    /**
+     * Mapear status do webhook para status interno
+     */
+    private function mapWebhookStatus(string $webhookStatus): string
     {
-        sleep(1);
+        $statusMap = [
+            'success' => 'completed',
+            'completed' => 'completed',
+            'confirmed' => 'completed',
+            'failed' => 'failed',
+            'error' => 'failed',
+            'cancelled' => 'cancelled',
+            'pending' => 'pending',
+            'processing' => 'processing'
+        ];
 
-        $success = rand(1, 10) <= 9; // 90% de sucesso
-
-        if ($success) {
-            return [
-                'success' => true,
-                'transaction_id' => 'EMOLA_EXT_' . time() . rand(1000, 9999),
-                'message' => 'Transação eMola iniciada com sucesso'
-            ];
-        } else {
-            return [
-                'success' => false,
-                'error' => 'Conta eMola não encontrada ou saldo insuficiente'
-            ];
-        }
-    }
-
-    private function normalizePhoneNumber($phone)
-    {
-        // Remover espaços e caracteres especiais
-        $phone = preg_replace('/[^0-9+]/', '', $phone);
-
-        // Normalizar para formato moçambicano
-        if (str_starts_with($phone, '+258')) {
-            $phone = substr($phone, 4);
-        } elseif (str_starts_with($phone, '258')) {
-            $phone = substr($phone, 3);
-        } elseif (str_starts_with($phone, '0')) {
-            $phone = substr($phone, 1);
-        }
-
-        return '+258' . $phone;
+        return $statusMap[strtolower($webhookStatus)] ?? 'pending';
     }
 }

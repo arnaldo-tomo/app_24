@@ -1,115 +1,213 @@
 <?php
-// app/Models/Payment.php
+
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Payment extends Model
 {
     use HasFactory;
 
     protected $fillable = [
-        'transaction_id', 'external_id', 'amount', 'fee_amount', 'net_amount',
-        'status', 'payment_date', 'description', 'metadata', 'failure_reason',
-        'order_id', 'payment_method_id', 'user_id'
+        'order_id',
+        'payment_method',
+        'amount',
+        'fee_amount',
+        'net_amount',
+        'status',
+        'transaction_id',
+        'external_transaction_id',
+        'payment_date',
+        'confirmed_at',
+        'confirmation_data',
+        'external_data',
+        'notes'
     ];
 
-    protected function casts(): array
-    {
-        return [
-            'amount' => 'decimal:2',
-            'fee_amount' => 'decimal:2',
-            'net_amount' => 'decimal:2',
-            'payment_date' => 'datetime',
-            'metadata' => 'array',
-        ];
-    }
-
-    const STATUSES = [
-        'pending' => 'Pendente',
-        'processing' => 'Processando',
-        'completed' => 'Concluído',
-        'failed' => 'Falhado',
-        'cancelled' => 'Cancelado',
-        'refunded' => 'Estornado',
-        'partially_refunded' => 'Estornado Parcialmente'
+    protected $casts = [
+        'amount' => 'decimal:2',
+        'fee_amount' => 'decimal:2',
+        'net_amount' => 'decimal:2',
+        'payment_date' => 'datetime',
+        'confirmed_at' => 'datetime',
+        'confirmation_data' => 'array',
+        'external_data' => 'array'
     ];
 
-    protected static function boot()
-    {
-        parent::boot();
+    // === RELACIONAMENTOS ===
 
-        static::creating(function ($payment) {
-            if (empty($payment->transaction_id)) {
-                $payment->transaction_id = 'TXN-' . strtoupper(uniqid());
-            }
-        });
-    }
-
-    public function order()
+    /**
+     * Pedido associado ao pagamento
+     */
+    public function order(): BelongsTo
     {
         return $this->belongsTo(Order::class);
     }
 
-    public function paymentMethod()
+    // === SCOPES ===
+
+    /**
+     * Pagamentos por status
+     */
+    public function scopeByStatus($query, $status)
     {
-        return $this->belongsTo(PaymentMethod::class);
+        return $query->where('status', $status);
     }
 
-    public function user()
+    /**
+     * Pagamentos completados
+     */
+    public function scopeCompleted($query)
     {
-        return $this->belongsTo(User::class);
+        return $query->where('status', 'completed');
     }
 
-    public function refunds()
+    /**
+     * Pagamentos pendentes
+     */
+    public function scopePending($query)
     {
-        return $this->hasMany(PaymentRefund::class);
+        return $query->where('status', 'pending');
     }
 
-    // Status helpers
-    public function isPending()
+    /**
+     * Pagamentos falhados
+     */
+    public function scopeFailed($query)
+    {
+        return $query->where('status', 'failed');
+    }
+
+    /**
+     * Pagamentos por método
+     */
+    public function scopeByMethod($query, $method)
+    {
+        return $query->where('payment_method', $method);
+    }
+
+    // === MÉTODOS DE CONVENIÊNCIA ===
+
+    /**
+     * Verificar se o pagamento foi confirmado
+     */
+    public function isConfirmed(): bool
+    {
+        return $this->status === 'completed' && !is_null($this->confirmed_at);
+    }
+
+    /**
+     * Verificar se o pagamento está pendente
+     */
+    public function isPending(): bool
     {
         return $this->status === 'pending';
     }
 
-    public function isCompleted()
+    /**
+     * Verificar se o pagamento falhou
+     */
+    public function hasFailed(): bool
     {
-        return $this->status === 'completed';
+        return in_array($this->status, ['failed', 'cancelled']);
     }
 
-    public function isFailed()
+    /**
+     * Obter texto do status em português
+     */
+    public function getStatusText(): string
     {
-        return $this->status === 'failed';
+        $statusTexts = [
+            'pending' => 'Pendente',
+            'processing' => 'Processando',
+            'completed' => 'Confirmado',
+            'failed' => 'Falhou',
+            'cancelled' => 'Cancelado',
+            'refunded' => 'Reembolsado'
+        ];
+
+        return $statusTexts[$this->status] ?? 'Desconhecido';
     }
 
-    public function isCancelled()
+    /**
+     * Obter cor do status
+     */
+    public function getStatusColor(): string
     {
-        return $this->status === 'cancelled';
+        $statusColors = [
+            'pending' => '#F59E0B',      // warning
+            'processing' => '#3B82F6',   // blue
+            'completed' => '#10B981',    // success
+            'failed' => '#EF4444',       // error
+            'cancelled' => '#6B7280',    // gray
+            'refunded' => '#8B5CF6'      // purple
+        ];
+
+        return $statusColors[$this->status] ?? '#6B7280';
     }
 
-    public function isRefunded()
+    /**
+     * Obter nome do método de pagamento
+     */
+    public function getPaymentMethodName(): string
     {
-        return in_array($this->status, ['refunded', 'partially_refunded']);
+        $methodNames = [
+            'cash' => 'Dinheiro',
+            'mpesa' => 'M-Pesa',
+            'emola' => 'e-Mola',
+            'card' => 'Cartão'
+        ];
+
+        return $methodNames[$this->payment_method] ?? 'Desconhecido';
     }
 
-    public function canBeRefunded()
+    /**
+     * Calcular valor líquido (amount - fee_amount)
+     */
+    public function calculateNetAmount(): float
     {
-        return $this->isCompleted() && $this->refunds()->sum('amount') < $this->amount;
+        return $this->amount - ($this->fee_amount ?? 0);
     }
 
-    public function getStatusLabel()
+    /**
+     * Atualizar valor líquido
+     */
+    public function updateNetAmount(): bool
     {
-        return self::STATUSES[$this->status] ?? $this->status;
+        $newNetAmount = $this->calculateNetAmount();
+
+        if ($this->net_amount != $newNetAmount) {
+            return $this->update(['net_amount' => $newNetAmount]);
+        }
+
+        return true;
     }
 
-    public function getRefundedAmount()
+    // === ACCESSORS ===
+
+    /**
+     * Accessor para valor formatado
+     */
+    public function getAmountFormattedAttribute(): string
     {
-        return $this->refunds()->sum('amount');
+        return number_format($this->amount, 2, ',', '.') . ' MT';
     }
 
-    public function getRemainingRefundableAmount()
+    /**
+     * Accessor para taxa formatada
+     */
+    public function getFeeAmountFormattedAttribute(): string
     {
-        return $this->amount - $this->getRefundedAmount();
+        return number_format($this->fee_amount ?? 0, 2, ',', '.') . ' MT';
+    }
+
+    /**
+     * Accessor para valor líquido formatado
+     */
+    public function getNetAmountFormattedAttribute(): string
+    {
+        return number_format($this->net_amount ?? $this->calculateNetAmount(), 2, ',', '.') . ' MT';
     }
 }
