@@ -1,17 +1,18 @@
 <?php
 namespace App\Http\Controllers\Api;
 
-use App\Http\Controllers\Controller;
-use App\Models\MenuItem;
 use App\Models\Order;
+use App\Models\MenuItem;
 use App\Models\OrderItem;
 use App\Models\Restaurant;
-use App\Services\PushService;
-use App\Services\SimplePushService;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
+use Illuminate\Http\Request;
+use App\Services\PushService;
+use Illuminate\Support\Facades\DB;
+use App\Services\SimplePushService;
+use Illuminate\Support\Facades\Log;
+use App\Http\Controllers\Controller;
+use Illuminate\Support\Facades\Validator;
 
 class OrderController extends Controller
 {
@@ -355,7 +356,7 @@ class OrderController extends Controller
             $this->sendStatusUpdateNotification($order, $previousStatus, $newStatus);
         } catch (\Exception $e) {
             // Log do erro mas não falhar a requisição
-            \Log::error('Erro ao enviar notificação: ' . $e->getMessage());
+            Log::error('Erro ao enviar notificação: ' . $e->getMessage());
         }
 
         return response()->json([
