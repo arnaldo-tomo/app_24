@@ -35,7 +35,7 @@ Route::prefix('v1/payment')->group(function () {
 });
 
 // Rotas protegidas por autenticação
-Route::middleware('auth:sanctum')->prefix('v1')->group(function () {
+Route::prefix('v1')->group(function () {
 
     // =============== ROTAS DE DELIVERY - ATUALIZADAS ===============
     Route::prefix('delivery')->group(function () {
