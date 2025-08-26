@@ -1,159 +1,94 @@
 <?php
 
-use App\Http\Controllers\Admin\ReportsController;
 use App\Http\Controllers\Api\AuthController;
-use App\Http\Controllers\Api\RestaurantController;
 use App\Http\Controllers\Api\OrderController;
 use App\Http\Controllers\Api\PaymentController;
 use App\Http\Controllers\Api\DeliveryController;
-use App\Http\Controllers\Api\NotificationController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
-Route::get('/user', function (Request $request) {
-    return $request->user();
-})->middleware('auth:sanctum');
+/*
+|--------------------------------------------------------------------------
+| API Routes - Versão Atualizada com Funcionalidades de Proximidade
+|--------------------------------------------------------------------------
+*/
 
-// Public API Routes
-Route::prefix('v1')->group(function () {
-    // Authentication
-    Route::post('/auth/register', [AuthController::class, 'register']);
-    Route::post('/auth/login', [AuthController::class, 'login']);
+// Webhook público (sem autenticação)
+Route::post('webhooks/payment', [PaymentController::class, 'paymentWebhook']);
 
-    // Public restaurant data
-    Route::get('/restaurants', [RestaurantController::class, 'index']);
-    Route::get('/restaurants/search', [RestaurantController::class, 'search']);
-    Route::get('/restaurants/{restaurant}', [RestaurantController::class, 'show']);
-    Route::get('/restaurants/{restaurant}/menu', [RestaurantController::class, 'getMenu']);
-    Route::get('/restaurants/{restaurant}/products', [RestaurantController::class, 'getRestaurantProducts']);
-    Route::get('/restaurants/featured', [RestaurantController::class, 'featured']);
-    Route::post('/restaurants/nearby', [RestaurantController::class, 'nearby']);
-    Route::get('/categories', [RestaurantController::class, 'categories']);
+// Rotas de autenticação
+Route::prefix('v1/auth')->group(function () {
+    Route::post('/login', [AuthController::class, 'login']);
+    Route::post('/register', [AuthController::class, 'register']);
 
-    // Health check
-    Route::get('/health', function () {
-        return response()->json([
-            'status' => 'success',
-            'message' => 'API funcionando corretamente',
-            'timestamp' => now(),
-            'version' => '1.0.0'
-        ]);
+    // Rotas autenticadas
+    Route::middleware('auth:sanctum')->group(function () {
+        Route::post('/logout', [AuthController::class, 'logout']);
+        Route::get('/me', [AuthController::class, 'me']);
+        Route::patch('/profile', [AuthController::class, 'updateProfile']);
     });
 });
 
-// Protected API Routes
+// Rotas gerais de pagamento (públicas)
+Route::prefix('v1/payment')->group(function () {
+    Route::get('methods', [PaymentController::class, 'getPaymentMethods']);
+});
+
+// Rotas protegidas por autenticação
 Route::middleware('auth:sanctum')->prefix('v1')->group(function () {
-    // Authentication
-    Route::post('/auth/logout', [AuthController::class, 'logout']);
-    Route::get('/auth/me', [AuthController::class, 'me']);
-    Route::patch('/auth/profile', [AuthController::class, 'updateProfile']);
 
-    // === ROTAS DE PEDIDOS (PRINCIPAIS) ===
+    // =============== ROTAS DE DELIVERY - ATUALIZADAS ===============
+    Route::prefix('delivery')->group(function () {
+        // Pedidos disponíveis com lógica de proximidade
+        Route::get('available-orders', [DeliveryController::class, 'availableOrders']);
+
+        // Aceitar pedido
+        Route::post('orders/{order}/accept', [DeliveryController::class, 'acceptOrder']);
+
+        // Minhas entregas (histórico)
+        Route::get('my-deliveries', [DeliveryController::class, 'myDeliveries']);
+
+        // Atualizar status da entrega
+        Route::patch('orders/{order}/status', [DeliveryController::class, 'updateDeliveryStatus']);
+
+        // NOVA: Atualizar localização do entregador
+        Route::post('update-location', [DeliveryController::class, 'updateLocation']);
+
+        // NOVA: Estatísticas do entregador
+        Route::get('stats', [DeliveryController::class, 'getDeliveryStats']);
+
+        // NOVA: Configurações de raio
+        Route::get('settings', [DeliveryController::class, 'getSettings']);
+        Route::patch('settings', [DeliveryController::class, 'updateSettings']);
+    });
+
+    // =============== ROTAS DE PEDIDOS (CLIENTES) ===============
     Route::prefix('orders')->group(function () {
-        // Listar pedidos do usuário
         Route::get('/', [OrderController::class, 'index']);
-
-        // Criar novo pedido
         Route::post('/', [OrderController::class, 'store']);
-
-        // Ver detalhes de um pedido específico
         Route::get('{order}', [OrderController::class, 'show']);
-
-        // Cancelar pedido
         Route::patch('{order}/cancel', [OrderController::class, 'cancel']);
-
-        // Rastrear pedido (para o app do cliente)
         Route::get('{order}/track', [OrderController::class, 'track']);
 
-        // Atualizar status do pedido (para admin/restaurante)
-        Route::put('{order}/status', [OrderController::class, 'updateStatus']);
-
-        // === ROTAS DE PAGAMENTO POR PEDIDO ===
+        // Rotas de Pagamento por Pedido
         Route::prefix('{order}/payment')->group(function () {
-            // Iniciar pagamento M-Pesa
             Route::post('mpesa', [PaymentController::class, 'initiateMpesaPayment']);
-
-            // Iniciar pagamento eMola
             Route::post('emola', [PaymentController::class, 'initiateMolaPayment']);
-
-            // Confirmar pagamento em dinheiro
             Route::post('cash', [PaymentController::class, 'confirmCashPayment']);
-
-            // Confirmar pagamento (genérico)
             Route::post('confirm', [PaymentController::class, 'confirmPayment']);
-
-            // Verificar status do pagamento
             Route::get('status', [PaymentController::class, 'checkPaymentStatus']);
         });
     });
 
-    // === ROTAS DE DELIVERY (PARA ENTREGADORES) ===
-    Route::prefix('delivery')->group(function () {
-        // Listar pedidos disponíveis para entrega
-        Route::get('available-orders', [DeliveryController::class, 'availableOrders']);
-
-        // Aceitar um pedido para entrega
-        Route::post('orders/{order}/accept', [DeliveryController::class, 'acceptOrder']);
-
-        // Listar minhas entregas
-        Route::get('my-deliveries', [DeliveryController::class, 'myDeliveries']);
-
-        // Atualizar status de entrega (com localização)
-        Route::patch('orders/{order}/status', [DeliveryController::class, 'updateDeliveryStatus']);
-
-        // Atualizar localização atual do entregador
-        Route::post('location', [DeliveryController::class, 'updateLocation']);
-    });
-
-    // === ROTAS DE PAGAMENTO GERAIS ===
-    Route::prefix('payment')->group(function () {
-        // Listar métodos de pagamento disponíveis
-        Route::get('methods', [PaymentController::class, 'getPaymentMethods']);
-
-        // Histórico de pagamentos do usuário
-        Route::get('history', [PaymentController::class, 'getPaymentHistory']);
-    });
-
-    // === ROTAS DE USUÁRIO ===
-    Route::prefix('user')->group(function () {
-        // Salvar token de push notification
-        Route::post('save-push-token', [OrderController::class, 'savePushToken']);
-        Route::post('push-token', [OrderController::class, 'savePushToken']); // Alias
-
-        // Perfil do usuário
-        Route::get('profile', [AuthController::class, 'getProfile']);
-        Route::patch('profile', [AuthController::class, 'updateProfile']);
-
-        // Endereços do usuário
-        Route::get('addresses', [AuthController::class, 'getAddresses']);
-        Route::post('addresses', [AuthController::class, 'storeAddress']);
-        Route::put('addresses/{address}', [AuthController::class, 'updateAddress']);
-        Route::delete('addresses/{address}', [AuthController::class, 'deleteAddress']);
-
-        // Favoritos
-        Route::get('favorites', [AuthController::class, 'getFavorites']);
-        Route::post('favorites/{restaurant}', [AuthController::class, 'addToFavorites']);
-        Route::delete('favorites/{restaurant}', [AuthController::class, 'removeFromFavorites']);
-    });
-
-    // === ROTAS DE NOTIFICAÇÕES ===
-    Route::prefix('notifications')->group(function () {
-        Route::get('/', [NotificationController::class, 'index']);
-        Route::patch('{notification}/read', [NotificationController::class, 'markAsRead']);
-        Route::patch('mark-all-read', [NotificationController::class, 'markAllAsRead']);
-        Route::delete('{notification}', [NotificationController::class, 'destroy']);
-    });
-
-    // === ROTAS DE REVIEWS/AVALIAÇÕES ===
-    Route::prefix('reviews')->group(function () {
-        Route::post('/', [RestaurantController::class, 'storeReview']);
-        Route::get('my-reviews', [RestaurantController::class, 'getUserReviews']);
-    });
+    // Push tokens para notificações
+    Route::post('/user/save-push-token', [OrderController::class, 'savePushToken']);
+    Route::put('/orders/{id}/status', [OrderController::class, 'updateStatus']);
 });
 
-// === ROTAS PARA RESTAURANTES (OWNERS) ===
+// =============== ROTAS DE RESTAURANTE (API MOBILE) ===============
 Route::middleware('auth:sanctum')->prefix('v1/restaurant')->group(function () {
-    // Dashboard stats
+
+    // Dashboard - Estatísticas básicas
     Route::get('/dashboard/stats', function (Request $request) {
         $user = $request->user();
 
@@ -162,7 +97,6 @@ Route::middleware('auth:sanctum')->prefix('v1/restaurant')->group(function () {
         }
 
         $restaurant = $user->restaurants()->first();
-
         if (!$restaurant) {
             return response()->json(['status' => 'error', 'message' => 'Restaurante não encontrado'], 404);
         }
@@ -176,11 +110,11 @@ Route::middleware('auth:sanctum')->prefix('v1/restaurant')->group(function () {
                                                 ->where('payment_status', 'paid')
                                                 ->sum('total_amount'),
             'pending_orders' => \App\Models\Order::where('restaurant_id', $restaurant->id)
-                                                 ->whereIn('status', ['pending', 'confirmed'])
+                                                 ->where('status', 'pending')
                                                  ->count(),
-            'total_orders' => \App\Models\Order::where('restaurant_id', $restaurant->id)->count(),
-            'average_rating' => $restaurant->reviews()->avg('rating') ?? 0,
-            'total_reviews' => $restaurant->reviews()->count()
+            'active_menu_items' => \App\Models\MenuItem::where('restaurant_id', $restaurant->id)
+                                                      ->where('is_available', true)
+                                                      ->count(),
         ];
 
         return response()->json([
@@ -189,7 +123,7 @@ Route::middleware('auth:sanctum')->prefix('v1/restaurant')->group(function () {
         ]);
     });
 
-    // Listar pedidos do restaurante
+    // Pedidos do restaurante
     Route::get('/orders', function (Request $request) {
         $user = $request->user();
 
@@ -198,15 +132,14 @@ Route::middleware('auth:sanctum')->prefix('v1/restaurant')->group(function () {
         }
 
         $restaurant = $user->restaurants()->first();
-
         if (!$restaurant) {
             return response()->json(['status' => 'error', 'message' => 'Restaurante não encontrado'], 404);
         }
 
         $orders = \App\Models\Order::where('restaurant_id', $restaurant->id)
-                                   ->with(['customer', 'items.menuItem'])
-                                   ->latest()
-                                   ->paginate($request->per_page ?? 15);
+                                  ->with(['customer', 'items.menuItem'])
+                                  ->latest()
+                                  ->paginate($request->per_page ?? 15);
 
         return response()->json([
             'status' => 'success',
@@ -214,7 +147,35 @@ Route::middleware('auth:sanctum')->prefix('v1/restaurant')->group(function () {
         ]);
     });
 
-    // Listar menu do restaurante
+    // Atualizar status do pedido
+    Route::patch('/orders/{order}/status', function (Request $request, \App\Models\Order $order) {
+        $user = $request->user();
+
+        if (!$user->isRestaurantOwner()) {
+            return response()->json(['status' => 'error', 'message' => 'Acesso negado'], 403);
+        }
+
+        $restaurant = $user->restaurants()->first();
+        if (!$restaurant || $order->restaurant_id !== $restaurant->id) {
+            return response()->json(['status' => 'error', 'message' => 'Acesso negado'], 403);
+        }
+
+        $validated = $request->validate([
+            'status' => 'required|in:pending,confirmed,preparing,ready,picked_up,delivered,cancelled'
+        ]);
+
+        $order->update($validated);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Status do pedido atualizado',
+            'data' => [
+                'order' => $order->fresh(['customer', 'items.menuItem'])
+            ]
+        ]);
+    });
+
+    // Menu do restaurante
     Route::get('/menu', function (Request $request) {
         $user = $request->user();
 
@@ -223,7 +184,6 @@ Route::middleware('auth:sanctum')->prefix('v1/restaurant')->group(function () {
         }
 
         $restaurant = $user->restaurants()->first();
-
         if (!$restaurant) {
             return response()->json(['status' => 'error', 'message' => 'Restaurante não encontrado'], 404);
         }
@@ -250,7 +210,6 @@ Route::middleware('auth:sanctum')->prefix('v1/restaurant')->group(function () {
         }
 
         $restaurant = $user->restaurants()->first();
-
         if (!$restaurant || $menuItem->restaurant_id !== $restaurant->id) {
             return response()->json(['status' => 'error', 'message' => 'Acesso negado'], 403);
         }
@@ -267,22 +226,9 @@ Route::middleware('auth:sanctum')->prefix('v1/restaurant')->group(function () {
     });
 });
 
-// === WEBHOOKS PÚBLICOS (SEM AUTENTICAÇÃO) ===
-// Webhook para pagamentos (M-Pesa, eMola, etc.)
-Route::post('webhooks/payment', [PaymentController::class, 'paymentWebhook']);
-
-// Webhook para notificações de terceiros
-Route::post('webhooks/notifications', [NotificationController::class, 'webhook']);
-
-// === ROTAS PARA ADMIN (se necessário) ===
-Route::middleware(['auth:sanctum', 'admin'])->prefix('v1/admin')->group(function () {
-    Route::get('dashboard/stats', [ReportsController::class, 'getDashboardStats']);
-    Route::get('orders', function (Request $request) {
-        return \App\Models\Order::with(['customer', 'restaurant', 'deliveryPerson'])
-                                ->latest()
-                                ->paginate($request->per_page ?? 20);
-    });
-    Route::get('users', function (Request $request) {
-        return \App\Models\User::latest()->paginate($request->per_page ?? 20);
-    });
+// =============== ROTAS DE ADMIN ===============
+Route::middleware(['auth', 'admin'])->prefix('api/admin')->name('api.admin.')->group(function () {
+    Route::get('dashboard/stats', [DashboardController::class, 'getStats'])->name('dashboard.stats');
+    Route::get('reports/chart-data', [ReportsController::class, 'getChartData'])->name('reports.chart-data');
+    Route::get('payments/analytics-data', [PaymentController::class, 'getAnalyticsData'])->name('payments.analytics-data');
 });
