@@ -1,90 +1,58 @@
 <?php
-
-use App\Http\Controllers\Api\AuthController;
-use App\Http\Controllers\Api\OrderController;
-use App\Http\Controllers\Api\PaymentController;
-use App\Http\Controllers\Api\DeliveryController;
-use Illuminate\Http\Request;
+use App\Http\Controllers\Api\{AuthController, RestaurantController, OrderController, PaymentController, DeliveryController};
+use Illuminate\Support\Facades\Request;
 use Illuminate\Support\Facades\Route;
 
-/*
-|--------------------------------------------------------------------------
-| API Routes - Versão Atualizada com Funcionalidades de Proximidade
-|--------------------------------------------------------------------------
-*/
-
-// Webhook público (sem autenticação)
-Route::post('webhooks/payment', [PaymentController::class, 'paymentWebhook']);
-
-// Rotas de autenticação
-Route::prefix('v1/auth')->group(function () {
-    Route::post('/login', [AuthController::class, 'login']);
-    Route::post('/register', [AuthController::class, 'register']);
-
-    // Rotas autenticadas
-    Route::middleware('auth:sanctum')->group(function () {
-        Route::post('/logout', [AuthController::class, 'logout']);
-        Route::get('/me', [AuthController::class, 'me']);
-        Route::patch('/profile', [AuthController::class, 'updateProfile']);
-    });
-});
-
-// Rotas gerais de pagamento (públicas)
-Route::prefix('v1/payment')->group(function () {
-    Route::get('methods', [PaymentController::class, 'getPaymentMethods']);
-});
-
-// Rotas protegidas por autenticação
+// 🔓 ROTAS PÚBLICAS (sem autenticação)
 Route::prefix('v1')->group(function () {
+    // Auth
+    Route::post('/auth/register', [AuthController::class, 'register']);
+    Route::post('/auth/login', [AuthController::class, 'login']);
 
-    // =============== ROTAS DE DELIVERY - ATUALIZADAS ===============
-    Route::prefix('delivery')->group(function () {
-        // Pedidos disponíveis com lógica de proximidade
-        Route::get('available-orders', [DeliveryController::class, 'availableOrders']);
-
-        // Aceitar pedido
-        Route::post('orders/{order}/accept', [DeliveryController::class, 'acceptOrder']);
-
-        // Minhas entregas (histórico)
-        Route::get('my-deliveries', [DeliveryController::class, 'myDeliveries']);
-
-        // Atualizar status da entrega
-        Route::patch('orders/{order}/status', [DeliveryController::class, 'updateDeliveryStatus']);
-
-        // NOVA: Atualizar localização do entregador
-        Route::post('update-location', [DeliveryController::class, 'updateLocation']);
-
-        // NOVA: Estatísticas do entregador
-        Route::get('stats', [DeliveryController::class, 'getDeliveryStats']);
-
-        // NOVA: Configurações de raio
-        Route::get('settings', [DeliveryController::class, 'getSettings']);
-        Route::patch('settings', [DeliveryController::class, 'updateSettings']);
-    });
-
-    // =============== ROTAS DE PEDIDOS (CLIENTES) ===============
-    Route::prefix('orders')->group(function () {
-        Route::get('/', [OrderController::class, 'index']);
-        Route::post('/', [OrderController::class, 'store']);
-        Route::get('{order}', [OrderController::class, 'show']);
-        Route::patch('{order}/cancel', [OrderController::class, 'cancel']);
-        Route::get('{order}/track', [OrderController::class, 'track']);
-
-        // Rotas de Pagamento por Pedido
-        Route::prefix('{order}/payment')->group(function () {
-            Route::post('mpesa', [PaymentController::class, 'initiateMpesaPayment']);
-            Route::post('emola', [PaymentController::class, 'initiateMolaPayment']);
-            Route::post('cash', [PaymentController::class, 'confirmCashPayment']);
-            Route::post('confirm', [PaymentController::class, 'confirmPayment']);
-            Route::get('status', [PaymentController::class, 'checkPaymentStatus']);
-        });
-    });
-
-    // Push tokens para notificações
-    Route::post('/user/save-push-token', [OrderController::class, 'savePushToken']);
-    Route::put('/orders/{id}/status', [OrderController::class, 'updateStatus']);
+    // Dados públicos
+    Route::get('/restaurants', [RestaurantController::class, 'index']);
+    Route::get('/restaurants/{restaurant}', [RestaurantController::class, 'show']);
+    Route::get('/restaurants/{restaurant}/products', [RestaurantController::class, 'getRestaurantProducts']);
+    Route::get('/categories', [RestaurantController::class, 'categories']);
+    Route::get('/restaurants/featured', [RestaurantController::class, 'featured']);
+    Route::post('/restaurants/nearby', [RestaurantController::class, 'nearby']);
 });
 
+// 🔐 ROTAS PROTEGIDAS (com autenticação)
+Route::middleware('auth:sanctum')->prefix('v1')->group(function () {
+    // Auth
+    Route::post('/auth/logout', [AuthController::class, 'logout']);
+    Route::get('/auth/me', [AuthController::class, 'me']);
+
+    // Pedidos
+    Route::get('/orders', [OrderController::class, 'index']);
+    Route::post('/orders', [OrderController::class, 'store']);
+    Route::get('/orders/{order}', [OrderController::class, 'show']);
+    Route::get('/orders/{order}/track', [OrderController::class, 'track']);
+
+    // Pagamentos
+    Route::get('/payment/methods', [PaymentController::class, 'getPaymentMethods']);
+    Route::post('/orders/{order}/payment', [PaymentController::class, 'processPayment']);
+
+    // Push tokens
+    Route::post('/user/save-push-token', [OrderController::class, 'savePushToken']);
+});
+
+// 🚚 ROTAS DO ENTREGADOR
+Route::middleware('auth:sanctum')->prefix('v1/delivery')->group(function () {
+    Route::get('/available-orders', [DeliveryController::class, 'availableOrders']);
+    Route::post('/orders/{order}/accept', [DeliveryController::class, 'acceptOrder']);
+    Route::get('/my-deliveries', [DeliveryController::class, 'myDeliveries']);
+    Route::patch('/orders/{order}/status', [DeliveryController::class, 'updateDeliveryStatus']);
+});
+
+// 🏪 ROTAS DO RESTAURANTE
+Route::middleware('auth:sanctum')->prefix('v1/restaurant')->group(function () {
+    Route::get('/dashboard/stats', [RestaurantController::class, 'getStats']);
+    Route::get('/orders', [RestaurantController::class, 'getRestaurantOrders']);
+    Route::patch('/orders/{order}/status', [RestaurantController::class, 'updateOrderStatus']);
+    Route::get('/menu', [RestaurantController::class, 'getMenu']);
+});
 // =============== ROTAS DE RESTAURANTE (API MOBILE) ===============
 Route::middleware('auth:sanctum')->prefix('v1/restaurant')->group(function () {
 

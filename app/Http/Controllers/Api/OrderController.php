@@ -51,6 +51,8 @@ class OrderController extends Controller
      */
     public function store(Request $request)
     {
+
+
         $validator = Validator::make($request->all(), [
             'restaurant_id' => 'required|exists:restaurants,id',
             'items' => 'required|array|min:1',
@@ -61,7 +63,7 @@ class OrderController extends Controller
             'delivery_address.city' => 'sometimes|string',
             'delivery_address.latitude' => 'sometimes|numeric',
             'delivery_address.longitude' => 'sometimes|numeric',
-            'payment_method' => 'required|in:cash,mpesa,emola',
+            // 'payment_method' => 'required|in:cash,mpesa,emola',
             'notes' => 'sometimes|string|max:500'
         ]);
 

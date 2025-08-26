@@ -6,7 +6,6 @@ use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
-use Laravel\Sanctum\HasApiTokens;
 
 class AuthController extends Controller
 {
@@ -14,58 +13,68 @@ class AuthController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
-            'email' => 'required|string|email|max:255|unique:users',
+            'email' => 'required|email|unique:users,email',
             'password' => 'required|string|min:8|confirmed',
             'phone' => 'required|string|max:20',
-            'role' => 'required|in:customer,delivery_person',
+            'role' => 'required|in:customer,delivery_person,restaurant_owner',
             'address' => 'nullable|string',
             'latitude' => 'nullable|numeric|between:-90,90',
-            'longitude' => 'nullable|numeric|between:-180,180',
+            'longitude' => 'nullable|numeric|between:-180,180'
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'status' => 'error',
-                'message' => 'Dados de validação inválidos',
+                'message' => 'Dados inválidos',
                 'errors' => $validator->errors()
             ], 422);
         }
 
-        $user = User::create([
-            'name' => $request->name,
-            'email' => $request->email,
-            'password' => Hash::make($request->password),
-            'phone' => $request->phone,
-            'role' => $request->role,
-            'address' => $request->address,
-            'latitude' => $request->latitude,
-            'longitude' => $request->longitude,
-        ]);
+        try {
+            $user = User::create([
+                'name' => $request->name,
+                'email' => $request->email,
+                'password' => Hash::make($request->password),
+                'phone' => $request->phone,
+                'role' => $request->role ?? 'customer',
+                'address' => $request->address,
+                'latitude' => $request->latitude,
+                'longitude' => $request->longitude,
+                'is_active' => true
+            ]);
 
-        $token = $user->createToken('auth_token')->plainTextToken;
+            $token = $user->createToken('auth_token')->plainTextToken;
 
-        return response()->json([
-            'status' => 'success',
-            'message' => 'Usuário registrado com sucesso',
-            'data' => [
-                'user' => $user,
-                'access_token' => $token,
-                'token_type' => 'Bearer',
-            ]
-        ], 201);
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Usuário criado com sucesso',
+                'data' => [
+                    'user' => $user,
+                    'token' => $token,
+                    'token_type' => 'Bearer'
+                ]
+            ], 201);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Erro ao criar usuário',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
     public function login(Request $request)
     {
         $validator = Validator::make($request->all(), [
             'email' => 'required|email',
-            'password' => 'required',
+            'password' => 'required|string'
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'status' => 'error',
-                'message' => 'Dados de validação inválidos',
+                'message' => 'Dados inválidos',
                 'errors' => $validator->errors()
             ], 422);
         }
@@ -82,10 +91,14 @@ class AuthController extends Controller
         if (!$user->is_active) {
             return response()->json([
                 'status' => 'error',
-                'message' => 'Conta desativada. Entre em contato com o suporte.'
-            ], 401);
+                'message' => 'Usuário inativo'
+            ], 403);
         }
 
+        // Revogar tokens existentes
+        $user->tokens()->delete();
+
+        // Criar novo token
         $token = $user->createToken('auth_token')->plainTextToken;
 
         return response()->json([
@@ -93,8 +106,8 @@ class AuthController extends Controller
             'message' => 'Login realizado com sucesso',
             'data' => [
                 'user' => $user,
-                'access_token' => $token,
-                'token_type' => 'Bearer',
+                'token' => $token,
+                'token_type' => 'Bearer'
             ]
         ]);
     }
@@ -115,43 +128,6 @@ class AuthController extends Controller
             'status' => 'success',
             'data' => [
                 'user' => $request->user()
-            ]
-        ]);
-    }
-
-    public function updateProfile(Request $request)
-    {
-        $validator = Validator::make($request->all(), [
-            'name' => 'sometimes|string|max:255',
-            'phone' => 'sometimes|string|max:20',
-            'address' => 'sometimes|string',
-            'latitude' => 'sometimes|numeric|between:-90,90',
-            'longitude' => 'sometimes|numeric|between:-180,180',
-            'avatar' => 'sometimes|image|mimes:jpeg,png,jpg,gif|max:2048',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Dados de validação inválidos',
-                'errors' => $validator->errors()
-            ], 422);
-        }
-
-        $user = $request->user();
-        $updateData = $request->only(['name', 'phone', 'address', 'latitude', 'longitude']);
-
-        if ($request->hasFile('avatar')) {
-            $updateData['avatar'] = $request->file('avatar')->store('avatars', 'public');
-        }
-
-        $user->update($updateData);
-
-        return response()->json([
-            'status' => 'success',
-            'message' => 'Perfil atualizado com sucesso',
-            'data' => [
-                'user' => $user->fresh()
             ]
         ]);
     }
