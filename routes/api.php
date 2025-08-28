@@ -40,6 +40,7 @@ Route::middleware('auth:sanctum')->prefix('v1')->group(function () {
 
 // 🚚 ROTAS DO ENTREGADOR
 Route::middleware('auth:sanctum')->prefix('v1/delivery')->group(function () {
+          Route::post('location', [DeliveryController::class, 'updateLocation']);
     Route::get('/available-orders', [DeliveryController::class, 'availableOrders']);
     Route::post('/orders/{order}/accept', [DeliveryController::class, 'acceptOrder']);
     Route::get('/my-deliveries', [DeliveryController::class, 'myDeliveries']);
@@ -116,7 +117,7 @@ Route::middleware('auth:sanctum')->prefix('v1/restaurant')->group(function () {
     });
 
     // Atualizar status do pedido
-    Route::patch('/orders/{order}/status', function (Request $request, \App\Models\Order $order) {
+  Route::patch('/orders/{order}/status', function (Request $request, \App\Models\Order $order) {
         $user = $request->user();
 
         if (!$user->isRestaurantOwner()) {
@@ -124,6 +125,7 @@ Route::middleware('auth:sanctum')->prefix('v1/restaurant')->group(function () {
         }
 
         $restaurant = $user->restaurants()->first();
+
         if (!$restaurant || $order->restaurant_id !== $restaurant->id) {
             return response()->json(['status' => 'error', 'message' => 'Acesso negado'], 403);
         }
@@ -138,7 +140,10 @@ Route::middleware('auth:sanctum')->prefix('v1/restaurant')->group(function () {
             'status' => 'success',
             'message' => 'Status do pedido atualizado',
             'data' => [
-                'order' => $order->fresh(['customer', 'items.menuItem'])
+                'order' => $order->fresh([
+                    'customer:id,name,phone,email',
+                    'items.menuItem:id,name,price'
+                ])
             ]
         ]);
     });

@@ -5,8 +5,10 @@ namespace App\Http\Controllers\Api;
 use App\Models\User;
 use App\Models\Order;
 use Illuminate\Http\Request;
+use Illuminate\Support\FacadesLog;
 use Illuminate\Support\Facades\Log;
 use App\Http\Controllers\Controller;
+use Illuminate\Support\Facades\Validator;
 
 class DeliveryController extends Controller
 {
@@ -34,7 +36,7 @@ class DeliveryController extends Controller
         }
 
         try {
-            Log::info('Buscando pedidos disponíveis para entregador: ' . $user->id);
+            Log::info('Buscando pedidos disponíveis para entregador: ' . $user->name . ' (ID: ' . $user->id . ')');
             Log::info('Localização do entregador:', [
                 'latitude' => $user->latitude,
                 'longitude' => $user->longitude,
@@ -60,9 +62,10 @@ class DeliveryController extends Controller
 
             // ✅ QUERY COM FILTRO DE DISTÂNCIA
             $orders = Order::with([
-                'restaurant:id,name,phone,address,latitude,longitude,image',
-                'customer:id,name,phone,email,address',
-                'items:id,order_id,menu_item_id,quantity,price,notes',
+      'restaurant:id,name,phone,address,latitude,longitude,image',
+    'customer:id,name,phone,email,address',
+    'items:id,order_id,menu_item_id,quantity,unit_price,total_price',
+    'items.menuItem:id,name,image' // ✅ Eager loading
             ])
             ->where('status', 'ready')           // Pedido PRONTO para coleta
             ->whereNull('delivery_person_id')    // SEM entregador atribuído
@@ -161,61 +164,54 @@ class DeliveryController extends Controller
         return $timeMinutes . ' min';
     }
 
-    /**
-     * ACEITAR PEDIDO - Como iFood
-     */
-    public function acceptOrder(Request $request, $orderId)
-    {
-        $user = $request->user();
+/**
+ * CORRIGIR O MÉTODO acceptOrder para dar mensagens mais claras
+ */
+public function acceptOrder(Request $request, $orderId)
+{
+    $user = $request->user();
 
-        if (!$user->isDeliveryPerson()) {
+    if (!$user->isDeliveryPerson()) {
+        return response()->json([
+            'status' => 'error',
+            'message' => 'Acesso negado'
+        ], 403);
+    }
+
+    try {
+        $order = Order::with(['restaurant', 'customer'])
+                      ->where('id', $orderId)
+                      ->where('status', 'ready')
+                      ->whereNull('delivery_person_id')
+                      ->first();
+
+        if (!$order) {
             return response()->json([
                 'status' => 'error',
-                'message' => 'Acesso negado'
-            ], 403);
+                'message' => 'Pedido não disponível ou já foi aceito por outro entregador'
+            ], 404);
         }
 
-        try {
-            $order = Order::with(['restaurant', 'customer'])
-                          ->where('id', $orderId)
-                          ->where('status', 'ready')
-                          ->whereNull('delivery_person_id')
-                          ->first();
+        // VERIFICAR SE TEM LOCALIZAÇÃO
+        if (!$user->latitude || !$user->longitude) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Sua localização não está disponível. Ative o GPS e tente novamente.',
+                'code' => 'NO_LOCATION'
+            ], 400);
+        }
 
-            if (!$order) {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'Pedido não disponível ou já foi aceito por outro entregador'
-                ], 404);
-            }
-
-            // ✅ VERIFICAR SE ESTÁ DENTRO DO RAIO ANTES DE ACEITAR
-            if ($user->latitude && $user->longitude && $order->restaurant) {
-                $distance = $this->calculateDistance(
-                    $user->latitude,
-                    $user->longitude,
-                    $order->restaurant->latitude,
-                    $order->restaurant->longitude
-                );
-
-                $maxDistance = $user->delivery_radius_km ?? 5;
-
-                if ($distance > $maxDistance) {
-                    return response()->json([
-                        'status' => 'error',
-                        'message' => "Pedido fora do seu raio de entrega ({$maxDistance}km). Distância: {$distance}km"
-                    ], 400);
-                }
-            }
-
-            // Atribuir entregador e mudar status
+        // VERIFICAR SE O RESTAURANTE TEM COORDENADAS
+        if (!$order->restaurant || !$order->restaurant->latitude || !$order->restaurant->longitude) {
+            Log::warning("Restaurante sem coordenadas: {$order->restaurant_id}");
+            // Permitir aceitar mesmo sem coordenadas do restaurante
             $order->update([
                 'delivery_person_id' => $user->id,
                 'status' => 'accepted',
                 'accepted_at' => now()
             ]);
 
-            Log::info("Pedido {$orderId} aceito pelo entregador {$user->id}");
+            Log::info("Pedido {$orderId} aceito pelo entregador {$user->id} (sem verificação de distância)");
 
             return response()->json([
                 'status' => 'success',
@@ -224,16 +220,57 @@ class DeliveryController extends Controller
                     'order' => $this->formatOrderForMobile($order->fresh(['restaurant', 'customer']))
                 ]
             ]);
+        }
 
-        } catch (\Exception $e) {
-            Log::error('Erro ao aceitar pedido: ' . $e->getMessage());
+        // CALCULAR DISTÂNCIA
+        $distance = $this->calculateDistance(
+            $user->latitude,
+            $user->longitude,
+            $order->restaurant->latitude,
+            $order->restaurant->longitude
+        );
+
+        $maxDistance = $user->delivery_radius_km ?? 5;
+
+        if ($distance > $maxDistance) {
             return response()->json([
                 'status' => 'error',
-                'message' => 'Erro ao aceitar pedido'
-            ], 500);
+                'message' => "Pedido fora do seu raio de entrega ({$maxDistance}km). Distância: {$distance}km",
+                'code' => 'OUT_OF_RANGE',
+                'data' => [
+                    'current_radius_km' => $maxDistance,
+                    'distance_km' => $distance,
+                    'suggestion' => 'Aumente seu raio de entrega nas configurações'
+                ]
+            ], 400);
         }
-    }
 
+        // ACEITAR O PEDIDO
+        $order->update([
+            'delivery_person_id' => $user->id,
+            'status' => 'picked_up',
+            'accepted_at' => now()
+        ]);
+
+        Log::info("Pedido {$orderId} aceito pelo entregador {$user->id} (distância: {$distance}km)");
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Pedido aceito com sucesso!',
+            'data' => [
+                'order' => $this->formatOrderForMobile($order->fresh(['restaurant', 'customer'])),
+                'distance_km' => $distance
+            ]
+        ]);
+
+    } catch (\Exception $e) {
+        Log::error('Erro ao aceitar pedido: ' . $e->getMessage());
+        return response()->json([
+            'status' => 'error',
+            'message' => 'Erro ao aceitar pedido'
+        ], 500);
+    }
+}
     /**
      * ✅ MÉTODO AUXILIAR: Calcular distância entre dois pontos (Haversine)
      */
@@ -338,21 +375,41 @@ class DeliveryController extends Controller
     /**
      * ✅ FORMATAR PEDIDO PARA MOBILE - Com informações de distância
      */
-    private function formatOrderForMobile($order)
+ private function formatOrderForMobile(Order $order)
     {
+        // Formatar endereço de entrega
+        $deliveryAddress = '';
+        if (is_array($order->delivery_address)) {
+            $addressParts = array_filter([
+                $order->delivery_address['street'] ?? '',
+                $order->delivery_address['neighborhood'] ?? '',
+                $order->delivery_address['city'] ?? ''
+            ]);
+            $deliveryAddress = implode(', ', $addressParts);
+        } else {
+            $deliveryAddress = $order->delivery_address ?? '';
+        }
+
         return [
             'id' => $order->id,
+            'order_number' => $order->order_number,
             'status' => $order->status,
-            'total_amount' => $order->total_amount,
-            'delivery_fee' => $order->delivery_fee ?? 0,
+            'total_amount' => number_format($order->total_amount, 2),
             'payment_method' => $order->payment_method,
             'payment_status' => $order->payment_status,
             'created_at' => $order->created_at->format('Y-m-d H:i:s'),
-            'accepted_at' => $order->accepted_at?->format('Y-m-d H:i:s'),
-            'picked_up_at' => $order->picked_up_at?->format('Y-m-d H:i:s'),
-            'delivered_at' => $order->delivered_at?->format('Y-m-d H:i:s'),
-
-            // Restaurante
+            'accepted_at' => $order->accepted_at ? $order->accepted_at->format('Y-m-d H:i:s') : null,
+            'picked_up_at' => $order->picked_up_at ? $order->picked_up_at->format('Y-m-d H:i:s') : null,
+            'delivered_at' => $order->delivered_at ? $order->delivered_at->format('Y-m-d H:i:s') : null,
+            'delivery_address' => [
+                'address' => $deliveryAddress,
+                'street' => $order->delivery_address['street'] ?? '',
+                'city' => $order->delivery_address['city'] ?? '',
+                'neighborhood' => $order->delivery_address['neighborhood'] ?? '',
+                'latitude' => $order->delivery_address['latitude'] ?? null,
+                'longitude' => $order->delivery_address['longitude'] ?? null,
+                'phone' => $order->delivery_address['phone'] ?? null,
+            ],
             'restaurant' => $order->restaurant ? [
                 'id' => $order->restaurant->id,
                 'name' => $order->restaurant->name,
@@ -362,32 +419,164 @@ class DeliveryController extends Controller
                 'longitude' => $order->restaurant->longitude,
                 'image' => $order->restaurant->image,
             ] : null,
-
-            // Cliente
             'customer' => $order->customer ? [
                 'id' => $order->customer->id,
                 'name' => $order->customer->name,
                 'phone' => $order->customer->phone,
+                'email' => $order->customer->email,
             ] : null,
-
-            // Endereço de entrega
-            'delivery_address' => [
-                'street' => $order->delivery_address,
-                'city' => $order->delivery_city ?? 'Maputo',
-                'latitude' => $order->delivery_latitude,
-                'longitude' => $order->delivery_longitude,
-            ],
-
-            // Itens do pedido
             'items' => $order->items ? $order->items->map(function($item) {
                 return [
                     'id' => $item->id,
-                    'menu_item_id' => $item->menu_item_id,
                     'quantity' => $item->quantity,
-                    'price' => $item->price,
+                    'price' => number_format($item->price, 2),
                     'notes' => $item->notes,
+                    'menu_item' => $item->menuItem ? [
+                        'id' => $item->menuItem->id,
+                        'name' => $item->menuItem->name,
+                        'description' => $item->menuItem->description,
+                        'price' => number_format($item->menuItem->price, 2),
+                        'image' => $item->menuItem->image,
+                    ] : null
                 ];
-            }) : [],
+            })->toArray() : [],
         ];
+    }
+
+    /**
+ * ATUALIZAR LOCALIZAÇÃO DO ENTREGADOR
+ * Deve ser chamado sempre que o entregador se mover ou ficar online
+ */
+public function updateLocation(Request $request)
+    {
+        $user = $request->user();
+
+        if (!$user->isDeliveryPerson()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Acesso negado'
+            ], 403);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'latitude' => 'required|numeric|between:-90,90',
+            'longitude' => 'required|numeric|between:-180,180',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Dados inválidos',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $user->update([
+                'latitude' => $request->latitude,
+                'longitude' => $request->longitude,
+                'last_location_update' => now(),
+            ]);
+
+            Log::info("✅ Localização atualizada no servidor");
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Localização atualizada'
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Erro ao atualizar localização: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Erro ao atualizar localização'
+            ], 500);
+        }
+    }
+
+ /**
+     * 🔧 ATUALIZAR STATUS - MÉTODO PRINCIPAL QUE ESTAVA FALTANDO
+     */
+    public function updateDeliveryStatus(Request $request, Order $order)
+    {
+        $user = $request->user();
+
+        Log::info("Tentativa de atualizar status do pedido {$order->id} pelo usuário {$user->id}");
+
+        if (!$user->isDeliveryPerson()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Acesso negado - Apenas entregadores podem atualizar status'
+            ], 403);
+        }
+
+        if ($order->delivery_person_id !== $user->id) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Acesso negado - Este pedido não é seu'
+            ], 403);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'status' => 'required|in:picked_up,delivered',
+            'latitude' => 'sometimes|numeric|between:-90,90',
+            'longitude' => 'sometimes|numeric|between:-180,180',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Dados inválidos',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $updateData = ['status' => $request->status];
+
+            if ($request->status === 'delivered') {
+                $updateData['delivered_at'] = now();
+                Log::info("Pedido {$order->order_number} marcado como entregue");
+            } elseif ($request->status === 'picked_up') {
+                $updateData['picked_up_at'] = now();
+                Log::info("Pedido {$order->order_number} marcado como coletado");
+            }
+
+            $order->update($updateData);
+
+            // Atualizar localização do entregador se fornecida
+            if ($request->has('latitude') && $request->has('longitude')) {
+                $user->update([
+                    'latitude' => $request->latitude,
+                    'longitude' => $request->longitude,
+                    'last_location_update' => now(),
+                ]);
+                Log::info("Localização do entregador {$user->id} atualizada");
+            }
+
+            $order = $order->fresh([
+                'restaurant:id,name,phone,address,latitude,longitude,image',
+                'customer:id,name,phone,email,address',
+                // 'items:id,order_id,menu_item_id,quantity,price,notes',
+                 'items:id,order_id,menu_item_id,quantity,unit_price,total_price',
+                'items.menuItem:id,name,description,price,image'
+            ]);
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Status da entrega atualizado com sucesso',
+                'data' => [
+                    'order' => $this->formatOrderForMobile($order)
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Erro ao atualizar status da entrega: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Erro ao atualizar status da entrega',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 }

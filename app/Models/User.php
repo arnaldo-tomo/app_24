@@ -13,7 +13,7 @@ class User extends Authenticatable
 
     protected $fillable = [
         'name', 'email', 'password', 'role', 'phone', 'address',
-        'latitude', 'longitude', 'avatar', 'is_active','push_token','device_platform'
+        'latitude', 'longitude', 'avatar', 'is_active','push_token','device_platform','location_updated_at','delivery_radius_km','last_online_at'
     ];
 
     protected $hidden = ['password', 'remember_token'];
@@ -26,6 +26,8 @@ class User extends Authenticatable
             'latitude' => 'decimal:8',
             'longitude' => 'decimal:8',
             'is_active' => 'boolean',
+              'location_updated_at' => 'datetime',
+    'last_online_at' => 'datetime',
         ];
     }
 
