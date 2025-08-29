@@ -8,12 +8,12 @@
 4. Heading CSS
 5. Button CSS
 6. Preloader CSS
-7. Animation CSS 
+7. Animation CSS
 8. Header - Main Navigation Section
-9. Hero Slider 
+9. Hero Slider
 10. Typing Text Section
 11. USP section
-12. Video Popup Model 
+12. Video Popup Model
 13. Scrolling Text Section
 14. Features Section
 15. Dishes List Scroll Section
@@ -65,16 +65,16 @@
     --primery: #fb5b29;
     --secondary:#faf9f5;
     --secondary-dark:#f4f2e9;
-    --border:#e3d3cf;
+    --border:#160b09;
     --body-text:#000000;
-    --light-primery: #fee7df;
+    --light-primery: #000000;
     --white: #fff;
     --black: #000000;
 
     --dark:#090023;
     --dark2:#2c2444;
     --nutral: #f3f4ff;
-    
+
     --dark-greay: #9599ab;
     --greay: #787878;
     --red-color: #ff0000;
@@ -86,7 +86,7 @@
 
 html {
     scroll-behavior: smooth
-} 
+}
 
 body {
     margin: 0;
@@ -736,7 +736,7 @@ header.fixed .navbar {
     /*margin-top: 70px;*/
     padding-top: 160px;
     position: relative;
-    background-color: var(--white);    
+    background-color: var(--white);
 }
 
 
@@ -970,7 +970,7 @@ header.fixed .navbar {
 }
 
 .usp_section .usp_box{
-    display: flex; 
+    display: flex;
     align-content:center;
     color: #fff;
     position: relative;
@@ -2087,7 +2087,7 @@ iframe#youtubevideo {
 
 .cta_section.new .cta_box{
     background: var(--primery);
-    position: relative; 
+    position: relative;
     z-index: 99;
     border-radius: 20px;
     padding: 60px 50px;
@@ -2122,9 +2122,9 @@ iframe#youtubevideo {
 
 .cta_section.new .cta_box .btn_block{
     display: flex;
-    justify-content: end; 
-    align-content: center; 
-    height: 100%; 
+    justify-content: end;
+    align-content: center;
+    height: 100%;
     flex-wrap: wrap;
 }
 
@@ -2474,7 +2474,7 @@ footer .bottom_footer .developer_text a {
 
 
 /* Inner Page banner shape animation */
-.bred_crumb .banner_shape1, .banner_shape2, .banner_shape3 { 
+.bred_crumb .banner_shape1, .banner_shape2, .banner_shape3 {
     position: absolute; }
 
 .bred_crumb .banner_shape1 {
@@ -2936,7 +2936,7 @@ footer .bottom_footer .developer_text a {
     border: none;
     border-radius: 10px;
     padding: 15px 20px;
-    
+
 }
 
 .faq_section .card .card-header button {
@@ -3772,7 +3772,7 @@ footer .bottom_footer .developer_text a {
     color: var(--dark-purple);
 }
 
-.contact_page_section .contact_info .contact_info_list li .text p , 
+.contact_page_section .contact_info .contact_info_list li .text p ,
 .contact_page_section .contact_info .contact_info_list li .text a {margin: 0;}
 
 .contact_page_section .contact_info .contact_info_list li .text a:hover {
